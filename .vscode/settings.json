@@ -1,0 +1,23 @@
+{
+    "files.associations": {
+        "*.embeddedhtml": "html",
+        "array": "cpp",
+        "functional": "cpp",
+        "*.txt": "cpp"
+    },
+    "editor.defaultFormatter": "xaver.clang-format",
+    "githubPullRequests.ignoredPullRequestBranches": [
+        "main"
+    ],
+    "cmake.configureOnOpen": false,
+    "[cpp]": {
+        // "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "C_Cpp.clang_format_style": "{ BasedOnStyle: Google, AllowShortIfStatementsOnASingleLine: true }"
+    },
+    "[c]": {
+        // "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "C_Cpp.clang_format_style": "{ BasedOnStyle: Google, AllowShortIfStatementsOnASingleLine: true }"
+    }
+}

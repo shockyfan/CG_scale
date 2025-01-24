@@ -1,0 +1,11 @@
+BasedOnStyle: Google
+AllowShortFunctionsOnASingleLine: false
+AllowShortStatementsOnASingleLine: true
+ColumnLimit: 0
+BraceWrapping:
+  AfterFunction: true
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterNamespace: true
+  AfterStruct: true

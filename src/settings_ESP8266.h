@@ -7,10 +7,10 @@
 
 // **** Loadcell hardware settings ****
 
-#define NUMBER_LOADCELLS                3       // if set to 2, the parameters of loadcell 3 are ignored
+#define NUMBER_LOADCELLS                2       // if set to 2, the parameters of loadcell 3 are ignored
 
-#define DISTANCE_X1                     30      // mm
-#define DISTANCE_X2                     350     // mm
+#define DISTANCE_X1                     20      // mm
+#define DISTANCE_X2                     50     // mm
 #define DISTANCE_X3                     220     // mm
 
 #define LOADCELL1_CALIBRATION_FACTOR    900     // user set calibration factor
@@ -45,11 +45,11 @@ CG scale with 3 Loadcells:
 */
 
 
-#define PIN_LOADCELL1_DOUT            D6
-#define PIN_LOADCELL1_PD_SCK          D5
+#define PIN_LOADCELL1_DOUT            D2
+#define PIN_LOADCELL1_PD_SCK          D1
 
-#define PIN_LOADCELL2_DOUT            D2
-#define PIN_LOADCELL2_PD_SCK          D1
+#define PIN_LOADCELL2_DOUT            D6
+#define PIN_LOADCELL2_PD_SCK          D5
 
 #define PIN_LOADCELL3_DOUT            D7
 #define PIN_LOADCELL3_PD_SCK          D0
@@ -85,7 +85,7 @@ U8G2_SH1106_128X64_NONAME_1_HW_I2C oledDisplay(U8G2_R0, /* reset=*/ U8X8_PIN_NON
 //U8G2_SSD1306_128X64_NONAME_1_HW_I2C oledDisplay(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ D3, /* data=*/ D4);
 
 #define DISPLAY_WIDTH                 128
-#define DISPLAY_HIGHT                 64
+#define DISPLAY_HEIGHT                 64
 
 
 // **** Voltage measurement settings ****
@@ -153,7 +153,7 @@ const char ip[4] =                  {1,2,3,4};    // default IP address
 #define ENABLE_UPDATE               true
 #define HTTPS_PORT                  443
 #define HOST                        "github.com"
-#define URL                         "/nightflyer88/CG_scale/releases/latest"
+#define URL                         "/shockyfan/CG_scale/releases/latest"
 
 
 

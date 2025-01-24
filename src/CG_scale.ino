@@ -2,13 +2,22 @@
   ------------------------------------------------------------------
                             CG scale
                       (c) 2019-2020 by M. Lehmann
+                      (c) 2025 by T. Schwartau
   ------------------------------------------------------------------
 */
-#define CGSCALE_VERSION "2.3"
+#define CGSCALE_VERSION "2.4.0"
 /*
 
   ******************************************************************
   history:
+  V2.4.0  03.01.25     Restructured files to use Platformio
+                       Configured Platformio
+                       Implemented ESPNow to send data to ServotesterDeluxe
+  V2.3.4  26.09.24     settings.html text fix SPIFFS to LittleFS
+                       Release 2.3.4
+  V2.3.3  26.09.24     fix Litt.leFS
+  V2.3.2  26.09.24     Change from SPIFFS to LittleFS
+  V2.3.1  26.09.24     Compiler Errors fixes
   V2.3    01.03.22     Up to three ESPs can be linked via WLAN. Useful for landing gear scales on engine models
   V2.22   28.11.20     fixed RAM problems with JSON
   V2.21   27.11.20     bug fixed: recompiled, binary file incorrect
@@ -79,52 +88,61 @@
 
 // **** Please UNCOMMENT to choose special hardware *****************
 
-//#define WIFI_KIT_8    //is a ESP8266 based board, with integrated OLED and battery management
+// #define WIFI_KIT_8    //is a ESP8266 based board, with integrated OLED and
+// battery management
 
 // ******************************************************************
 
 // Required libraries, can be installed from the library manager
-#include <HX711_ADC.h>      // library for the HX711 24-bit ADC for weight scales (https://github.com/olkal/HX711_ADC)
-#include <U8g2lib.h>        // Universal 8bit Graphics Library (https://github.com/olikraus/u8g2/)
+#include <HX711_ADC.h>  // library for the HX711 24-bit ADC for weight scales (https://github.com/olkal/HX711_ADC)
+#include <U8g2lib.h>    // Universal 8bit Graphics Library (https://github.com/olikraus/u8g2/)
 
 // built-in libraries
 #include <EEPROM.h>
 #include <Wire.h>
 
+// Activate ESPNOW
+#define ESPNOW
+#if defined(ESPNOW)
+#include "ESPNow_core.h"
+#endif
+
 // libraries for ESP8266
 #if defined(ESP8266)
-#include <FS.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <WiFiClientSecure.h>
-#include <ESP8266HTTPClient.h>
-#include <ESP8266mDNS.h>
-#include <WiFiUdp.h>
-#include <ArduinoOTA.h>
-#include <ElegantOTA.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#include <ElegantOTA.h>
+#include <LittleFS.h>
+#include <WiFiClientSecure.h>
+#include <WiFiUdp.h>
 #endif
 
 // load settings
 #if defined(__AVR__)
-  #include "settings_AVR.h"
+#include "settings_AVR.h"
 #elif defined(ESP8266)
-  #ifdef WIFI_KIT_8
-    #include "settings_WIFI_KIT_8.h"
-  #else
-    #include "settings_ESP8266.h"
-  #endif
+#ifdef WIFI_KIT_8
+#include "settings_WIFI_KIT_8.h"
+#else
+#include "settings_ESP8266.h"
+#endif
 #endif
 
 // HX711 constructor array (dout pin, sck pint):
-HX711_ADC LoadCell[] {HX711_ADC(PIN_LOADCELL1_DOUT, PIN_LOADCELL1_PD_SCK), HX711_ADC(PIN_LOADCELL2_DOUT, PIN_LOADCELL2_PD_SCK), HX711_ADC(PIN_LOADCELL3_DOUT, PIN_LOADCELL3_PD_SCK)};
+HX711_ADC LoadCell[]{HX711_ADC(PIN_LOADCELL1_DOUT, PIN_LOADCELL1_PD_SCK),
+                     HX711_ADC(PIN_LOADCELL2_DOUT, PIN_LOADCELL2_PD_SCK),
+                     HX711_ADC(PIN_LOADCELL3_DOUT, PIN_LOADCELL3_PD_SCK)};
 
 // webserver constructor
 #if defined(ESP8266)
 ESP8266WebServer server(80);
 IPAddress apIP(ip[0], ip[1], ip[2], ip[3]);
 WiFiClientSecure httpsClient;
-File fsUploadFile;              // a File object to temporarily store the received file
+File fsUploadFile;  // a File object to temporarily store the received file
 #endif
 
 #include "defaults.h"
@@ -163,12 +181,14 @@ char ssid_STA[MAX_SSID_PW_LENGHT + 1] = SSID_STA;
 char password_STA[MAX_SSID_PW_LENGHT + 1] = PASSWORD_STA;
 char ssid_AP[MAX_SSID_PW_LENGHT + 1] = SSID_AP;
 char password_AP[MAX_SSID_PW_LENGHT + 1] = PASSWORD_AP;
-char loadCellURL[3][MAX_SSID_PW_LENGHT + 1] = {"","",""};
+char loadCellURL[3][MAX_SSID_PW_LENGHT + 1] = {"", "", ""};
 bool enableUpdate = ENABLE_UPDATE;
 bool enableOTA = ENABLE_OTA;
 #endif
 
 // declare variables
+static unsigned long ESPNow_sendOld;
+
 float weightLoadCell[] = {0, 0, 0};
 float lastWeightLoadCell[] = {0, 0, 0};
 float weightTotal = 0;
@@ -191,19 +211,16 @@ bool wifiSTAmode = true;
 float gitVersion = -1;
 #endif
 
-
-
 // Restart CPU
 #if defined(__AVR__)
-void(* resetCPU) (void) = 0;
+void (*resetCPU)(void) = 0;
 #elif defined(ESP8266)
-void resetCPU() {}
+void resetCPU() {
+}
 #endif
 
-
 // convert time to string
-char * TimeToString(unsigned long t)
-{
+char *TimeToString(unsigned long t) {
   static char str[13];
   int h = t / 3600000;
   t = t % 3600000;
@@ -215,23 +232,21 @@ char * TimeToString(unsigned long t)
   return str;
 }
 
-
 // Count percentage from cell voltage
 int percentBat(float cellVoltage) {
-
   int result = 0;
   int elementCount = DATAPOINTS_PERCENTLIST;
   byte batTypeArray = batType - 2;
 
   for (int i = 0; i < elementCount; i++) {
-    if (pgm_read_float( &percentList[batTypeArray][i][1]) == 100 ) {
+    if (pgm_read_float(&percentList[batTypeArray][i][1]) == 100) {
       elementCount = i;
       break;
     }
   }
 
-  float cellempty = pgm_read_float( &percentList[batTypeArray][0][0]);
-  float cellfull = pgm_read_float( &percentList[batTypeArray][elementCount][0]);
+  float cellempty = pgm_read_float(&percentList[batTypeArray][0][0]);
+  float cellfull = pgm_read_float(&percentList[batTypeArray][elementCount][0]);
 
   if (cellVoltage >= cellfull) {
     result = 100;
@@ -252,7 +267,6 @@ int percentBat(float cellVoltage) {
 
   return result;
 }
-
 
 void printConsole(int t, String msg) {
   Serial.print(TimeToString(millis()));
@@ -281,63 +295,86 @@ void printConsole(int t, String msg) {
   Serial.println(msg);
 }
 
+void initESPNow() {
+  WiFi.mode(WIFI_STA);
+#ifdef ESP32
+  esp_wifi_set_channel(CHANNEL, WIFI_SECOND_CHAN_NONE);
+  Serial.print("ESP32 STA MAC: ");
+#else
+  WiFi.channel(CHANNEL);
+  Serial.print("ESP8266 STA MAC: ");
+#endif
+
+  Serial.print("STA MAC: ");
+  Serial.println(WiFi.macAddress());
+  Serial.print("STA CHANNEL ");
+  Serial.println(WiFi.channel());
+  InitESPNow();
+  esp_now_register_send_cb(OnDataSent);
+}
 
 void initOLED() {
   oledDisplay.begin();
-  printConsole(T_BOOT, "init OLED display: " + String(DISPLAY_WIDTH) + String("x") + String(DISPLAY_HIGHT));
-
-#if DISPLAY_HIGHT > 32
-  oledFontBig    = u8g2_font_helvR18_tn;
-  oledFontLarge  = u8g2_font_helvR12_tr;
+  printConsole(T_BOOT, "init OLED display: " + String(DISPLAY_WIDTH) +
+                           String("x") + String(DISPLAY_HEIGHT));
+ 
+#if DISPLAY_HEIGHT > 32
+  oledFontBig = u8g2_font_helvR18_tn;
+  oledFontLarge = u8g2_font_helvR12_tr;
   oledFontNormal = u8g2_font_helvR10_tr;
-  oledFontSmall  = u8g2_font_5x7_tr;
-#elif DISPLAY_HIGHT <= 32
-  oledFontBig    = u8g2_font_helvR14_tr;
-  oledFontLarge  = u8g2_font_helvR10_tr;
+  oledFontSmall = u8g2_font_5x7_tr;
+#elif DISPLAY_HEIGHT <= 32
+  oledFontBig = u8g2_font_helvR14_tr;
+  oledFontLarge = u8g2_font_helvR10_tr;
   oledFontNormal = u8g2_font_6x12_tr;
-  oledFontSmall  = u8g2_font_5x7_tr;
+  oledFontSmall = u8g2_font_5x7_tr;
 #endif
-
-  int ylineHeight = DISPLAY_HIGHT / 3;
 
   oledDisplay.firstPage();
   do {
     oledDisplay.setFont(oledFontLarge);
-#if DISPLAY_HIGHT <= 32
-    oledDisplay.drawXBMP(5, 0, 18, 18, CGImage);
+#if DISPLAY_HEIGHT <= 32
+    oledDisplay.drawXBMP(0, 0, 18, 18, CGImage);
 #else
     oledDisplay.drawXBMP(20, 12, 18, 18, CGImage);
 #endif
     oledDisplay.setFont(oledFontLarge);
 
-#if DISPLAY_HIGHT <= 32
-    oledDisplay.setCursor(30, 12);
+#if DISPLAY_HEIGHT <= 32
+    oledDisplay.setCursor(25, 12);
 #else
     oledDisplay.setCursor(45, 28);
 #endif
     oledDisplay.print(F("CG scale"));
 
     oledDisplay.setFont(oledFontSmall);
-#if DISPLAY_HIGHT <= 32
-    oledDisplay.setCursor(30, 22);
+#if DISPLAY_HEIGHT <= 32
+    oledDisplay.setCursor(90, 12);
+    oledDisplay.print(F("v"));
 #else
-    oledDisplay.setCursor(35, 55);
-#endif
+    oledDisplay.setCursor(35, 46);
     oledDisplay.print(F("Version: "));
+#endif
     oledDisplay.print(CGSCALE_VERSION);
-#if DISPLAY_HIGHT <= 32
-    oledDisplay.setCursor(5, 31);
+#if DISPLAY_HEIGHT <= 32
+    oledDisplay.setCursor(15, 22);
 #else
-    oledDisplay.setCursor(20, 64);
+    oledDisplay.setCursor(20, 55);
 #endif
     oledDisplay.print(F("(c) 2020 M.Lehmann"));
 
-  } while ( oledDisplay.nextPage() );
+#if DISPLAY_HEIGHT <= 32
+    oledDisplay.setCursor(15, 31);
+#else
+    oledDisplay.setCursor(20, 64);
+#endif
+    oledDisplay.print(F("(c) 2025 T.Schwartau"));
+
+  } while (oledDisplay.nextPage());
 }
 
-
 void printOLED(String aLine1, String aLine2, String aLine3) {
-  int ylineHeight = DISPLAY_HIGHT / 3;
+  int ylineHeight = DISPLAY_HEIGHT / 3;
 
   oledDisplay.firstPage();
   do {
@@ -346,9 +383,9 @@ void printOLED(String aLine1, String aLine2, String aLine3) {
     oledDisplay.print(aLine1);
     oledDisplay.setCursor(0, ylineHeight * 2);
     oledDisplay.print(aLine2);
-    oledDisplay.setCursor(0, DISPLAY_HIGHT);
+    oledDisplay.setCursor(0, DISPLAY_HEIGHT);
     oledDisplay.print(aLine3);
-  } while ( oledDisplay.nextPage() );
+  } while (oledDisplay.nextPage());
 }
 
 void printScaleOLED() {
@@ -388,71 +425,72 @@ void printScaleOLED() {
       }
 
 #if defined(ESP8266)
-      if (DISPLAY_HIGHT <= 32 && (strlen(loadCellURL[LC1]) || strlen(loadCellURL[LC2]) || strlen(loadCellURL[LC3]))) {
+      if (DISPLAY_HEIGHT <= 32 && (strlen(loadCellURL[LC1]) || strlen(loadCellURL[LC2]) || strlen(loadCellURL[LC3]))) {
         oledDisplay.setFont(oledFontBig);
         float weight = 0;
         for (int i = LC1; i <= LC3; i++) {
           if (i < nLoadcells) {
-            if(strlen(loadCellURL[i]) == 0){
+            if (strlen(loadCellURL[i]) == 0) {
               weight = weightLoadCell[i];
-            } 
+            }
           }
         }
         dtostrf(weight, 5, 1, buff);
         oledDisplay.setCursor(80 - oledDisplay.getStrWidth(buff), 28);
         oledDisplay.print(buff);
         oledDisplay.print(F(" g"));
-      }else{
+      } else {
 #endif
         // print total weight
-        if (nLoadcells == 1 ) {
+        if (nLoadcells == 1) {
           oledDisplay.setFont(oledFontBig);
           dtostrf(weightTotal, 5, 1, buff);
-#if DISPLAY_HIGHT <= 32
+#if DISPLAY_HEIGHT <= 32
           oledDisplay.setCursor(80 - oledDisplay.getStrWidth(buff), 28);
 #else
-          oledDisplay.drawXBMP(2, pos_weightTotal, 18, 18, weightImage);
-          oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff), pos_weightTotal + 17);
+        oledDisplay.drawXBMP(2, pos_weightTotal, 18, 18, weightImage);
+        oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff), pos_weightTotal + 17);
 #endif
           oledDisplay.print(buff);
           oledDisplay.print(F(" g"));
-          
-        }else{
+        } else {
           oledDisplay.setFont(oledFontNormal);
           dtostrf(weightTotal, 5, 1, buff);
-#if DISPLAY_HIGHT <= 32
+#if DISPLAY_HEIGHT <= 32
           oledDisplay.setCursor(1, 18);
           oledDisplay.print(F("M  = "));
 #else
-          oledDisplay.drawXBMP(2, pos_weightTotal, 18, 18, weightImage);
-          oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff), pos_weightTotal + 17);
+        oledDisplay.drawXBMP(2, pos_weightTotal, 18, 18, weightImage);
+        oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff),
+                              pos_weightTotal + 17);
 #endif
           oledDisplay.print(buff);
           oledDisplay.print(F(" g"));
-    
+
           // print CG longitudinal axis
           dtostrf(CG_length, 5, 1, buff);
-#if DISPLAY_HIGHT <= 32
+#if DISPLAY_HEIGHT <= 32
           oledDisplay.setCursor(1, 32);
           oledDisplay.print(F("CG = "));
 #else
-          oledDisplay.drawXBMP(2, pos_CG_length, 18, 18, CGImage);
-          oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff), pos_CG_length + 16);
+        oledDisplay.drawXBMP(2, pos_CG_length, 18, 18, CGImage);
+        oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff),
+                              pos_CG_length + 16);
 #endif
           oledDisplay.print(buff);
           oledDisplay.print(F(" mm"));
         }
-  
+
         // print CG transverse axis
-        if (nLoadcells == 3 ) {
-#if DISPLAY_HIGHT <= 32
+        if (nLoadcells == 3) {
+#if DISPLAY_HEIGHT <= 32
           oledDisplay.setCursor(78, 32);
           oledDisplay.print(F("LR="));
           dtostrf(CG_trans, 3, 0, buff);
 #else
-          dtostrf(CG_trans, 5, 1, buff);
-          oledDisplay.drawXBMP(2, 47, 18, 18, CGtransImage);
-          oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff), 64);
+        dtostrf(CG_trans, 5, 1, buff);
+        oledDisplay.drawXBMP(2, 47, 18, 18, CGtransImage);
+        oledDisplay.setCursor(93 - oledDisplay.getStrWidth(buff), 64);
 #endif
           oledDisplay.print(buff);
           oledDisplay.print(F(" mm"));
@@ -467,9 +505,30 @@ void printScaleOLED() {
         oledDisplay.print(errMsg[i]);
       }
     }
-  } while ( oledDisplay.nextPage() );
+  } while (oledDisplay.nextPage());
 }
 
+void sendESPNow() {
+  ESPNowData.type = 2;
+  ESPNowData.U_Lipo = batVolt;
+  ESPNowData.Bat_Type = batType;
+  ESPNowData.Model_Weight = weightTotal;
+  ESPNowData.Model_CG = CG_length;
+  ESPNowData.Model_CG_Trans = CG_trans;
+
+  if (millis() - ESPNow_sendOld > 200) {
+    ESPNow_sendOld = millis();
+    bool slaveFound = ScanForSlave();
+    if (slaveFound) {
+      bool isPaired = manageSlave();
+      if (isPaired) {
+        sendData();
+      } else {
+        printConsole(T_ERROR, "Slave pair failed!");
+      }
+    }
+  }
+}
 
 #ifdef PIN_TARE_BUTTON
 void handleTareBtn() {
@@ -482,7 +541,7 @@ void handleTareBtn() {
     } else {
       tareBtnCnt++;
       if (tareBtnCnt > 10) {
-        printOLED("TARE ==>", "  tare load cells ...","");
+        printOLED("TARE ==>", "  tare load cells ...", "");
         // avoid keybounce
         tareBtnCnt = -1000;
         tareLoadcells();
@@ -496,12 +555,12 @@ void handleTareBtn() {
 // save calibration factor
 void saveCalFactor(int nLC) {
   LoadCell[nLC].setCalFactor(calFactorLoadcell[nLC]);
-  EEPROM.put(P_LOADCELL1_CALIBRATION_FACTOR + (nLC * sizeof(float)), calFactorLoadcell[nLC]);
+  EEPROM.put(P_LOADCELL1_CALIBRATION_FACTOR + (nLC * sizeof(float)),
+             calFactorLoadcell[nLC]);
 #if defined(ESP8266)
   EEPROM.commit();
 #endif
 }
-
 
 void updateLoadcells() {
   for (int i = LC1; i <= LC3; i++) {
@@ -511,12 +570,11 @@ void updateLoadcells() {
   }
 }
 
-
 void tareLoadcells() {
   for (int i = LC1; i <= LC3; i++) {
     if (i < nLoadcells) {
 #if defined(ESP8266)
-      if(strlen(loadCellURL[i]) == 0){
+      if (strlen(loadCellURL[i]) == 0) {
         LoadCell[i].tare();
       }
 #else
@@ -526,11 +584,9 @@ void tareLoadcells() {
   }
 }
 
-
 void printNewValueText() {
   Serial.print(F("Set new value:"));
 }
-
 
 // run auto calibration
 bool runAutoCalibrate() {
@@ -555,8 +611,8 @@ bool runAutoCalibrate() {
 
   // finish
   Serial.println(F("done"));
+  return true;
 }
-
 
 // check if a loadcell has error
 bool getLoadcellError() {
@@ -577,7 +633,6 @@ bool getLoadcellError() {
 
   return err;
 }
-
 
 #if defined(ESP8266)
 
@@ -605,7 +660,7 @@ void writeModelData(JsonObject object) {
   object["mType"] = model.mechanicsType;
 
   JsonArray virtw = object.createNestedArray("virtual");
-  for (int i=0; i < MAX_VIRTUAL_WEIGHT; i++){
+  for (int i = 0; i < MAX_VIRTUAL_WEIGHT; i++) {
     JsonArray virtWeight = virtw.createNestedArray();
     virtWeight.add(model.virtualWeight[i].name);
     virtWeight.add(model.virtualWeight[i].cg);
@@ -614,19 +669,17 @@ void writeModelData(JsonObject object) {
   }
 }
 
-
 // save model to json file
 bool saveModelJson(String modelName) {
-
   if (modelName.length() > MAX_MODELNAME_LENGHT) {
     return false;
   }
 
   DynamicJsonDocument jsonDoc(JSONDOC_SIZE);
 
-  if (SPIFFS.exists(MODEL_FILE)) {
+  if (LittleFS.exists(MODEL_FILE)) {
     // read json file
-    File f = SPIFFS.open(MODEL_FILE, "r");
+    File f = LittleFS.open(MODEL_FILE, "r");
     auto error = deserializeJson(jsonDoc, f);
     f.close();
     if (error) {
@@ -642,7 +695,7 @@ bool saveModelJson(String modelName) {
     }
     // write to file
     if (!error) {
-      f = SPIFFS.open(MODEL_FILE, "w");
+      f = LittleFS.open(MODEL_FILE, "w");
       serializeJson(jsonDoc, f);
       f.close();
     } else {
@@ -654,7 +707,7 @@ bool saveModelJson(String modelName) {
     writeModelData(jsonDoc.createNestedObject(modelName));
     // write to file
     if (!jsonDoc.isNull()) {
-      File f = SPIFFS.open(MODEL_FILE, "w");
+      File f = LittleFS.open(MODEL_FILE, "w");
       serializeJson(jsonDoc, f);
       f.close();
     } else {
@@ -666,15 +719,13 @@ bool saveModelJson(String modelName) {
   return true;
 }
 
-
 // read model data from json file
 bool openModelJson(String modelName) {
-
   DynamicJsonDocument jsonDoc(JSONDOC_SIZE);
 
-  if (SPIFFS.exists(MODEL_FILE)) {
+  if (LittleFS.exists(MODEL_FILE)) {
     // read json file
-    File f = SPIFFS.open(MODEL_FILE, "r");
+    File f = LittleFS.open(MODEL_FILE, "r");
     auto error = deserializeJson(jsonDoc, f);
     f.close();
     if (error) {
@@ -692,8 +743,8 @@ bool openModelJson(String modelName) {
       model.mechanicsType = jsonDoc[modelName]["mType"];
 
       JsonArray virtw = jsonDoc[modelName]["virtual"];
-      if(virtw){
-        for (int i=0; i < MAX_VIRTUAL_WEIGHT; i++){
+      if (virtw) {
+        for (int i = 0; i < MAX_VIRTUAL_WEIGHT; i++) {
           model.virtualWeight[i].name = virtw[i][0].as<String>();
           model.virtualWeight[i].cg = virtw[i][1].as<int>();
           model.virtualWeight[i].weight = virtw[i][2].as<int>();
@@ -717,15 +768,13 @@ bool openModelJson(String modelName) {
   return false;
 }
 
-
 // delete model from json file
 bool deleteModelJson(String modelName) {
-
   DynamicJsonDocument jsonDoc(JSONDOC_SIZE);
 
-  if (SPIFFS.exists(MODEL_FILE)) {
+  if (LittleFS.exists(MODEL_FILE)) {
     // read json file
-    File f = SPIFFS.open(MODEL_FILE, "r");
+    File f = LittleFS.open(MODEL_FILE, "r");
     auto error = deserializeJson(jsonDoc, f);
     f.close();
     if (error) {
@@ -741,11 +790,11 @@ bool deleteModelJson(String modelName) {
     }
     // if no models in json, kill it
     if (jsonDoc.size() == 0) {
-      SPIFFS.remove(MODEL_FILE);
+      LittleFS.remove(MODEL_FILE);
     } else {
       // write to file
       if (!jsonDoc.isNull()) {
-        File f = SPIFFS.open(MODEL_FILE, "w");
+        File f = LittleFS.open(MODEL_FILE, "w");
         serializeJson(jsonDoc, f);
         f.close();
       } else {
@@ -760,7 +809,6 @@ bool deleteModelJson(String modelName) {
   return false;
 }
 
-
 // send headvalues to client
 void getHead() {
   String response = ssid_AP;
@@ -774,7 +822,6 @@ void getHead() {
   response += gitVersion;
   server.send(200, "text/html", response);
 }
-
 
 // send values to client
 void getValue() {
@@ -801,7 +848,6 @@ void getValue() {
   server.send(200, "text/html", response);
 }
 
-
 // send raw values to client
 void getRawValue() {
   char buff[8];
@@ -827,7 +873,6 @@ void getRawValue() {
   server.send(200, "text/html", response);
 }
 
-
 // send parameters to client
 void getParameter() {
   char buff[8];
@@ -840,9 +885,9 @@ void getParameter() {
 
   DynamicJsonDocument jsonDoc(JSONDOC_SIZE);
 
-  if (SPIFFS.exists(MODEL_FILE)) {
+  if (LittleFS.exists(MODEL_FILE)) {
     // read json file
-    File f = SPIFFS.open(MODEL_FILE, "r");
+    File f = LittleFS.open(MODEL_FILE, "r");
     auto error = deserializeJson(jsonDoc, f);
     f.close();
     // check if model exists
@@ -916,7 +961,6 @@ void getParameter() {
   server.send(200, "text/html", response);
 }
 
-
 // send virtual weights to client
 void getVirtualWeight() {
   String response = "";
@@ -924,7 +968,7 @@ void getVirtualWeight() {
   DynamicJsonDocument jsonDoc(JSONDOC_SIZE);
 
   JsonArray virtw = jsonDoc.createNestedArray("virtual");
-  for (int i=0; i < MAX_VIRTUAL_WEIGHT; i++){
+  for (int i = 0; i < MAX_VIRTUAL_WEIGHT; i++) {
     JsonArray virtWeight = virtw.createNestedArray();
     virtWeight.add(model.virtualWeight[i].name);
     virtWeight.add(model.virtualWeight[i].cg);
@@ -935,7 +979,6 @@ void getVirtualWeight() {
   serializeJson(jsonDoc["virtual"], response);
   server.send(200, "text/html", response);
 }
-
 
 // send available WiFi networks to client
 void getWiFiNetworks() {
@@ -956,7 +999,6 @@ void getWiFiNetworks() {
   }
   server.send(200, "text/html", response);
 }
-
 
 // save parameters
 void saveParameter() {
@@ -1004,9 +1046,9 @@ void saveParameter() {
   EEPROM.put(P_ENABLE_UPDATE, enableUpdate);
   EEPROM.put(P_ENABLE_OTA, enableOTA);
   EEPROM.put(P_DEVICENAME, device_Name);
-  EEPROM.put(P_LC1_URL, loadCellURL[LC1]);  
-  EEPROM.put(P_LC2_URL, loadCellURL[LC2]);  
-  EEPROM.put(P_LC3_URL, loadCellURL[LC3]);  
+  EEPROM.put(P_LC1_URL, loadCellURL[LC1]);
+  EEPROM.put(P_LC2_URL, loadCellURL[LC2]);
+  EEPROM.put(P_LC3_URL, loadCellURL[LC3]);
   EEPROM.commit();
 
   if (model.name != "") {
@@ -1016,13 +1058,11 @@ void saveParameter() {
   server.send(200, "text/plain", "saved");
 }
 
-
 // calibrate cg scale
 void autoCalibrate() {
   while (!runAutoCalibrate());
   server.send(200, "text/plain", "Calibration successful");
 }
-
 
 // tare cg scale
 void runTare() {
@@ -1034,7 +1074,6 @@ void runTare() {
   server.send(404, "text/plain", "404: Tare failed !");
 }
 
-
 // save model
 void saveModel() {
   if (server.hasArg("modelname")) {
@@ -1044,14 +1083,14 @@ void saveModel() {
     if (server.hasArg("distanceX2")) model.distance[X2] = server.arg("distanceX2").toFloat();
     if (server.hasArg("distanceX3")) model.distance[X3] = server.arg("distanceX3").toFloat();
     if (server.hasArg("mechanicsType")) model.mechanicsType = server.arg("mechanicsType").toInt();
-    if(server.hasArg("virtualWeight")){    
+    if (server.hasArg("virtualWeight")) {
       DynamicJsonDocument jsonDoc(JSONDOC_SIZE);
       String json = server.arg("virtualWeight");
       json.replace("%22", "\"");
       deserializeJson(jsonDoc, json);
       JsonArray virtw = jsonDoc["virtual"];
-      if(virtw){
-        for (int i=0; i < MAX_VIRTUAL_WEIGHT; i++){
+      if (virtw) {
+        for (int i = 0; i < MAX_VIRTUAL_WEIGHT; i++) {
           model.virtualWeight[i].name = virtw[i][0].as<String>();
           model.virtualWeight[i].weight = virtw[i][1].as<int>();
           model.virtualWeight[i].cg = virtw[i][2].as<int>();
@@ -1059,7 +1098,7 @@ void saveModel() {
         }
       }
     }
-      
+
     if (saveModelJson(server.arg("modelname"))) {
       server.send(200, "text/plain", "saved");
       return;
@@ -1067,7 +1106,6 @@ void saveModel() {
   }
   server.send(404, "text/plain", "404: Save model failed !");
 }
-
 
 // open model
 void openModel() {
@@ -1080,7 +1118,6 @@ void openModel() {
   server.send(404, "text/plain", "404: Open model failed !");
 }
 
-
 // delete model
 void deleteModel() {
   if (server.hasArg("modelname")) {
@@ -1092,32 +1129,41 @@ void deleteModel() {
   server.send(404, "text/plain", "404: Delete model failed !");
 }
 
-
 // convert the file extension to the MIME type
 String getContentType(String filename) {
-  if (filename.endsWith(".html")) return "text/html";
-  else if (filename.endsWith(".png")) return "text/css";
-  else if (filename.endsWith(".css")) return "text/css";
-  else if (filename.endsWith(".js")) return "application/javascript";
-  else if (filename.endsWith(".map")) return "application/json";
-  else if (filename.endsWith(".ico")) return "image/x-icon";
-  else if (filename.endsWith(".gz")) return "application/x-gzip";
+  if (filename.endsWith(".html"))
+    return "text/html";
+  else if (filename.endsWith(".png"))
+    return "text/css";
+  else if (filename.endsWith(".css"))
+    return "text/css";
+  else if (filename.endsWith(".js"))
+    return "application/javascript";
+  else if (filename.endsWith(".map"))
+    return "application/json";
+  else if (filename.endsWith(".ico"))
+    return "image/x-icon";
+  else if (filename.endsWith(".gz"))
+    return "application/x-gzip";
   return "text/plain";
 }
-
 
 // send file to the client (if it exists)
 bool handleFileRead(String path) {
   // If a folder is requested, send the index file
-  if (path.endsWith("/")) path += "index.html";
+  if (path.endsWith("/")) {
+    path += "index.html";
+  }
+
   String contentType = getContentType(path);
   String pathWithGz = path + ".gz";
 
   // If the file exists, either as a compressed archive, or normal
-  if (SPIFFS.exists(pathWithGz) || SPIFFS.exists(path)) {
-    if (SPIFFS.exists(pathWithGz))
+  if (LittleFS.exists(pathWithGz) || LittleFS.exists(path)) {
+    if (LittleFS.exists(pathWithGz)) {
       path += ".gz";
-    File file = SPIFFS.open(path, "r");
+    }
+    File file = LittleFS.open(path, "r");
     size_t sent = server.streamFile(file, contentType);
     file.close();
     return true;
@@ -1126,18 +1172,22 @@ bool handleFileRead(String path) {
   return false;
 }
 
-
-// upload a new file to the SPIFFS
+// upload a new file to the LittleFS
 void handleFileUpload() {
-
-  HTTPUpload& upload = server.upload();
+  HTTPUpload &upload = server.upload();
 
   if (upload.status == UPLOAD_FILE_START) {
     String filename = upload.filename;
-    if (!filename.startsWith("/")) filename = "/" + filename;
-    if (filename != MODEL_FILE ) server.send(500, "text/plain", "wrong file !");
-    // Open the file for writing in SPIFFS (create if it doesn't exist)
-    fsUploadFile = SPIFFS.open(filename, "w");
+    if (!filename.startsWith("/")) {
+      filename = "/" + filename;
+    }
+
+    if (filename != MODEL_FILE) {
+      server.send(500, "text/plain", "wrong file !");
+    }
+
+    // Open the file for writing in LittleFS (create if it doesn't exist)
+    fsUploadFile = LittleFS.open(filename, "w");
     filename = String();
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     // Write the received bytes to the file
@@ -1153,9 +1203,7 @@ void handleFileUpload() {
       server.send(500, "text/plain", "500: couldn't create file");
     }
   }
-
 }
-
 
 // print update progress screen
 void printUpdateProgress(unsigned int progress, unsigned int total) {
@@ -1173,9 +1221,8 @@ void printUpdateProgress(unsigned int progress, unsigned int total) {
     oledDisplay.drawFrame(0, 40, 128, 10);
     oledDisplay.drawBox(0, 40, (progress / (total / 128)), 10);
 
-  } while ( oledDisplay.nextPage() );
+  } while (oledDisplay.nextPage());
 }
-
 
 // https update
 bool httpsUpdate(uint8_t command) {
@@ -1184,13 +1231,13 @@ bool httpsUpdate(uint8_t command) {
     return false;
   }
 
-  const char * headerKeys[] = {"Location"} ;
+  const char *headerKeys[] = {"Location"};
   const size_t numberOfHeaders = 1;
 
   HTTPClient https;
   https.setUserAgent("cgscale");
   https.setRedirectLimit(0);
-  https.setFollowRedirects(true);
+  https.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
 
   String url = "https://" + String(HOST) + String(URL);
   if (https.begin(httpsClient, url)) {
@@ -1209,7 +1256,7 @@ bool httpsUpdate(uint8_t command) {
           printConsole(T_UPDATE, "Firmware version found on GitHub: V" + String(gitVersion) + " - current firmware is up to date");
         }
       } else if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
-        //Serial.println(https.getString());
+        // Serial.println(https.getString());
       } else {
         printConsole(T_ERROR, "HTTPS: GET... failed, " + https.errorToString(httpCode));
         https.end();
@@ -1226,7 +1273,6 @@ bool httpsUpdate(uint8_t command) {
 
   return true;
 }
-
 
 void waitWiFiconnected() {
   long timeoutWiFi = millis();
@@ -1247,9 +1293,7 @@ void waitWiFiconnected() {
 
 #endif
 
-
 void setup() {
-
   // init serial
   Serial.begin(115200);
   Serial.println();
@@ -1259,7 +1303,7 @@ void setup() {
   printConsole(T_BOOT, "startup CG scale V" + String(CGSCALE_VERSION));
 
   // init filesystem
-  SPIFFS.begin();
+  LittleFS.begin();
   EEPROM.begin(EEPROM_SIZE);
   printConsole(T_BOOT, "init filesystem");
 #endif
@@ -1332,7 +1376,7 @@ void setup() {
 
   if (EEPROM.read(P_DEVICENAME) != 0xFF) {
     EEPROM.get(P_DEVICENAME, device_Name);
-  }else{
+  } else {
     strcpy(device_Name, ssid_AP);
   }
 
@@ -1357,6 +1401,19 @@ void setup() {
 
 #endif
 
+  bool wifiIsUsed = false;
+#if defined(ESPNOW)
+  initESPNow();
+  wifiIsUsed = ScanForSlave();
+#endif
+
+  Serial.print("Wifi is used: ");
+  Serial.println(wifiIsUsed);
+
+  if (wifiIsUsed) {
+    printConsole(T_BOOT, "Wifi: ESPNOW mode - connected.");
+  }
+
   // init OLED display
   initOLED();
 
@@ -1379,169 +1436,169 @@ void setup() {
   tareLoadcells();
   getLoadcellError();
 
+  if (!wifiIsUsed) {
 #if defined(ESP8266)
 
-  printConsole(T_BOOT, "Wifi: STA mode - connecing with: " + String(ssid_STA));
+    printConsole(T_BOOT, "Wifi: STA mode - connecting with: " + String(ssid_STA));
 
-  // Start by connecting to a WiFi network
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid_STA, password_STA);
+    // Start by connecting to a WiFi network
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid_STA, password_STA);
 
-  waitWiFiconnected();
-
-  // in slave mode connect to AP network
-  if (nLoadcells == 1 && WiFi.status() != WL_CONNECTED) {
-    WiFi.begin(ssid_AP, password_AP);
     waitWiFiconnected();
-  }
-  /*long timeoutWiFi = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    if (WiFi.status() == WL_NO_SSID_AVAIL) {
-      printConsole(T_ERROR, "\nWifi: No SSID available");
-      break;
-    } else if (WiFi.status() == WL_CONNECT_FAILED) {
-      printConsole(T_ERROR, "\nWifi: Connection failed");
-      break;
-    } else if ((millis() - timeoutWiFi) > TIMEOUT_CONNECT) {
-      printConsole(T_ERROR, "\nWifi: Timeout");
-      break;
+
+    // in slave mode connect to AP network
+    if (nLoadcells == 1 && WiFi.status() != WL_CONNECTED) {
+      WiFi.begin(ssid_AP, password_AP);
+      waitWiFiconnected();
     }
-  }*/
+    /*long timeoutWiFi = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      if (WiFi.status() == WL_NO_SSID_AVAIL) {
+        printConsole(T_ERROR, "\nWifi: No SSID available");
+        break;
+      } else if (WiFi.status() == WL_CONNECT_FAILED) {
+        printConsole(T_ERROR, "\nWifi: Connection failed");
+        break;
+      } else if ((millis() - timeoutWiFi) > TIMEOUT_CONNECT) {
+        printConsole(T_ERROR, "\nWifi: Timeout");
+        break;
+      }
+    }*/
 
+    if (WiFi.status() != WL_CONNECTED) {
+      // if WiFi not connected, switch to access point mode
+      wifiSTAmode = false;
+      printConsole(T_BOOT, "Wifi: AP mode - create access point: " + String(ssid_AP));
+      WiFi.mode(WIFI_AP);
+      WiFi.softAPConfig(apIP, apIP,
+                        IPAddress(255, 255, 255, 0));
+      WiFi.softAP(ssid_AP, password_AP);
+      printConsole(T_RUN, "Wifi: Connected, IP: " + String(WiFi.softAPIP().toString()));
+    } else {
+      printConsole(T_RUN, "Wifi: Connected, IP: " + String(WiFi.localIP().toString()));
+    }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    // if WiFi not connected, switch to access point mode
-    wifiSTAmode = false;
-    printConsole(T_BOOT, "Wifi: AP mode - create access point: " + String(ssid_AP));
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAP(ssid_AP, password_AP);
-    printConsole(T_RUN, "Wifi: Connected, IP: " + String(WiFi.softAPIP().toString()));
-  } else {
-    printConsole(T_RUN, "Wifi: Connected, IP: " + String(WiFi.localIP().toString()));
-  }
-
-
-  // Set Hostname
-  String hostname = "disabled";
+    // Set Hostname
+    String hostname = "disabled";
 #if ENABLE_MDNS
-  hostname = device_Name;
-  hostname.replace(" ", "");
-  hostname.toLowerCase();
-  if (!MDNS.begin(hostname, WiFi.localIP())) {
-    hostname = "mDNS failed";
-    printConsole(T_ERROR, "Wifi: " + hostname);
-  } else {
-    hostname += ".local";
-    printConsole(T_RUN, "Wifi hostname: " + hostname);
-  }
+    hostname = device_Name;
+    hostname.replace(" ", "");
+    hostname.toLowerCase();
+    if (!MDNS.begin(hostname, WiFi.localIP())) {
+      hostname = "mDNS failed";
+      printConsole(T_ERROR, "Wifi: " + hostname);
+    } else {
+      hostname += ".local";
+      printConsole(T_RUN, "Wifi hostname: " + hostname);
+    }
 #endif
 
-  if (wifiSTAmode) {
-    printOLED("WiFi: " + String(ssid_STA),
-              "Host: " + String(hostname),
-              "IP: " + WiFi.localIP().toString());
-  } else {
-    printOLED("WiFi: " + String(ssid_AP),
-              "Host: " + String(hostname),
-              "IP: " + WiFi.softAPIP().toString());
-  }
+    if (wifiSTAmode) {
+      printOLED("WiFi: " + String(ssid_STA),
+                "Host: " + String(hostname),
+                "IP: " + WiFi.localIP().toString());
+    } else {
+      printOLED("WiFi: " + String(ssid_AP),
+                "Host: " + String(hostname),
+                "IP: " + WiFi.softAPIP().toString());
+    }
 
-  delay(3000);
+    delay(3000);
 
-  // When the client requests data
-  server.on("/getHead", getHead);
-  server.on("/getValue", getValue);
-  server.on("/getRawValue", getRawValue);
-  server.on("/getParameter", getParameter);
-  server.on("/getWiFiNetworks", getWiFiNetworks);
-  server.on("/getVirtualWeight", getVirtualWeight);
-  server.on("/saveParameter", saveParameter);
-  server.on("/autoCalibrate", autoCalibrate);
-  server.on("/tare", runTare);
-  server.on("/saveModel", saveModel);
-  server.on("/openModel", openModel);
-  server.on("/deleteModel", deleteModel);
+    // When the client requests data
+    server.on("/getHead", getHead);
+    server.on("/getValue", getValue);
+    server.on("/getRawValue", getRawValue);
+    server.on("/getParameter", getParameter);
+    server.on("/getWiFiNetworks", getWiFiNetworks);
+    server.on("/getVirtualWeight", getVirtualWeight);
+    server.on("/saveParameter", saveParameter);
+    server.on("/autoCalibrate", autoCalibrate);
+    server.on("/tare", runTare);
+    server.on("/saveModel", saveModel);
+    server.on("/openModel", openModel);
+    server.on("/deleteModel", deleteModel);
 
-  // When the client upload file
-  server.on("/settings.html", HTTP_POST, []() {
-    server.send(200, "text/plain", "");
-  }, handleFileUpload);
+    // When the client upload file
+    server.on("/settings.html", HTTP_POST, []() { server.send(200, "text/plain", ""); }, handleFileUpload);
 
-  // If the client requests any URI
-  server.onNotFound([]() {
-    if (!handleFileRead(server.uri()))
-      server.send(404, "text/plain", "CGscale Error: 404\n File or URL not Found !");
-  });
-
-  // init ElegantOTA
-  ElegantOTA.begin(&server);
-
-  // init webserver
-  server.begin();
-  printConsole(T_RUN, "Webserver is up and running");
-
-  // init OTA (over the air update)
-  if (enableOTA) {
-    ArduinoOTA.setHostname(ssid_AP);
-    ArduinoOTA.setPassword(password_AP);
-
-    ArduinoOTA.onStart([]() {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH) {
-        type = "firmware";
-      } else { // U_SPIFFS
-        type = "SPIFFS";
+    // If the client requests any URI
+    server.onNotFound([]() {
+      if (!handleFileRead(server.uri())) {
+        server.send(404, "text/plain", "CGscale Error: 404\n File or URL not Found !");
       }
-      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-      updateMsg = "Updating " + type;
-      printConsole(T_UPDATE, type);
     });
 
-    ArduinoOTA.onEnd([]() {
-      updateMsg = "successful..";
-      printUpdateProgress(100, 100);
-    });
+    // init ElegantOTA
+    ElegantOTA.begin(&server);
 
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-      printUpdateProgress(progress, total);
-    });
+    // init webserver
+    server.begin();
+    printConsole(T_RUN, "Webserver is up and running");
 
-    ArduinoOTA.onError([](ota_error_t error) {
-      if (error == OTA_AUTH_ERROR) {
-        updateMsg = "Auth Failed";
-      } else if (error == OTA_BEGIN_ERROR) {
-        updateMsg = "Begin Failed";
-      } else if (error == OTA_CONNECT_ERROR) {
-        updateMsg = "Connect Failed";
-      } else if (error == OTA_RECEIVE_ERROR) {
-        updateMsg = "Receive Failed";
-      } else if (error == OTA_END_ERROR) {
-        updateMsg = "End Failed";
-      }
-      printUpdateProgress(0, 100);
-    });
+    // init OTA (over the air update)
+    if (enableOTA) {
+      ArduinoOTA.setHostname(ssid_AP);
+      ArduinoOTA.setPassword(password_AP);
 
-    ArduinoOTA.begin();
-    printConsole(T_RUN, "OTA is up and running");
-  }
+      ArduinoOTA.onStart([]() {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH) {
+          type = "firmware";
+        } else {  // U_LittleFS
+          type = "LittleFS";
+        }
+        // NOTE: if updating LittleFS this would be the place to unmount LittleFS using LittleFS.end()
+        updateMsg = "Updating " + type;
+        printConsole(T_UPDATE, type);
+      });
 
-  // https update
-  httpsClient.setInsecure();
-  if (enableUpdate) {
-    // check for update
-    httpsUpdate(PROBE_UPDATE);
-  }
+      ArduinoOTA.onEnd([]() {
+        updateMsg = "successful..";
+        printUpdateProgress(100, 100);
+      });
+
+      ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        printUpdateProgress(progress, total);
+      });
+
+      ArduinoOTA.onError([](ota_error_t error) {
+        if (error == OTA_AUTH_ERROR) {
+          updateMsg = "Auth Failed";
+        } else if (error == OTA_BEGIN_ERROR) {
+          updateMsg = "Begin Failed";
+        } else if (error == OTA_CONNECT_ERROR) {
+          updateMsg = "Connect Failed";
+        } else if (error == OTA_RECEIVE_ERROR) {
+          updateMsg = "Receive Failed";
+        } else if (error == OTA_END_ERROR) {
+          updateMsg = "End Failed";
+        }
+        printUpdateProgress(0, 100);
+      });
+
+      ArduinoOTA.begin();
+      printConsole(T_RUN, "OTA is up and running");
+    }
+
+    // https update
+    httpsClient.setInsecure();
+    if (enableUpdate) {
+      // check for update
+      httpsUpdate(PROBE_UPDATE);
+    }
 
 #endif
-
+  } else {
+    printOLED("WiFi: ESPNOW", "", "");
+    delay(3000);
+  }
 }
 
-
 void loop() {
-
 #if defined(ESP8266)
 
 #if ENABLE_MDNS
@@ -1581,7 +1638,7 @@ void loop() {
     for (int i = LC1; i <= LC3; i++) {
       if (i < nLoadcells) {
 #if defined(ESP8266)
-        if(strlen(loadCellURL[i]) == 0){
+        if (strlen(loadCellURL[i]) == 0) {
 #endif
           // get local data
           weightLoadCell[i] = LoadCell[i].getData();
@@ -1590,28 +1647,29 @@ void loop() {
           weightLoadCell[i] = weightLoadCell[i] + SMOOTHING_LOADCELL * (lastWeightLoadCell[i] - weightLoadCell[i]);
           lastWeightLoadCell[i] = weightLoadCell[i];
 #if defined(ESP8266)
-        }else{
+        } else {
           // get data from external server
           WiFiClient client;
           HTTPClient http;
-          
-          http.begin(client, "http://" + String(loadCellURL[i]) + "/getRawValue");
+
+          http.begin(client,
+                     "http://" + String(loadCellURL[i]) + "/getRawValue");
           http.setTimeout(2000);
           int httpCode = http.GET();
 
           if (httpCode == HTTP_CODE_OK) {
-            const String& txt = http.getString();
+            const String &txt = http.getString();
 
             // split response string
             int delimiterStartIndex = 0;
             int delimiterEndIndex = 0;
             String subString[10];
             int subStringCount = 0;
-            while(delimiterEndIndex > -1){
-              delimiterEndIndex = txt.indexOf('&',delimiterStartIndex);
-              subString[subStringCount] = txt.substring(delimiterStartIndex,delimiterEndIndex);
+            while (delimiterEndIndex > -1) {
+              delimiterEndIndex = txt.indexOf('&', delimiterStartIndex);
+              subString[subStringCount] = txt.substring(delimiterStartIndex, delimiterEndIndex);
               ++subStringCount;
-              delimiterStartIndex = delimiterEndIndex+1;
+              delimiterStartIndex = delimiterEndIndex + 1;
             }
 
             weightLoadCell[i] = subString[LC1].toFloat();
@@ -1625,7 +1683,7 @@ void loop() {
             errMsg[++errMsgCnt] = msg + "\n";
             printConsole(T_ERROR, msg);
           }
-          
+
           http.end();
         }
 #endif
@@ -1633,10 +1691,8 @@ void loop() {
     }
   }
 
-
   // update display and serial menu
   if ((millis() - lastTimeMenu) > UPDATE_INTERVAL_OLED_MENU) {
-
     lastTimeMenu = millis();
 
     // total model weight
@@ -1649,56 +1705,54 @@ void loop() {
       if (nLoadcells > 1) {
         // CG longitudinal axis
         CG_length = ((weightLoadCell[LC2] * model.distance[X2]) / weightTotal) + model.distance[X1];
-  
+
 #if defined(ESP8266)
         if (model.mechanicsType == 2) {
           CG_length = ((weightLoadCell[LC2] * model.distance[X2]) / weightTotal) - model.distance[X1];
         } else if (model.mechanicsType == 3) {
           CG_length = ((weightLoadCell[LC2] * model.distance[X2]) / weightTotal) * -1 + model.distance[X1];
         }
-  
-        /* Virtual weights 
-  
+
+        /* Virtual weights
         m = weight
         d = cg
         d_new=(m1*d1+m2*d2)/(m1+m2)
         */
-  
-        for (int i=0; i < MAX_VIRTUAL_WEIGHT; i++){
-          if(model.virtualWeight[i].enabled == true){
+
+        for (int i = 0; i < MAX_VIRTUAL_WEIGHT; i++) {
+          if (model.virtualWeight[i].enabled == true) {
             CG_length = (weightTotal * CG_length + model.virtualWeight[i].weight * model.virtualWeight[i].cg) / (weightTotal + model.virtualWeight[i].weight);
           }
         }
-  
-        for (int i=0; i < MAX_VIRTUAL_WEIGHT; i++){
-          if(model.virtualWeight[i].enabled == true){
-            weightTotal +=  model.virtualWeight[i].weight;
+
+        for (int i = 0; i < MAX_VIRTUAL_WEIGHT; i++) {
+          if (model.virtualWeight[i].enabled == true) {
+            weightTotal += model.virtualWeight[i].weight;
           }
         }
-        
-  #endif
-  
+
+#endif
+
         // CG transverse axis
         if (nLoadcells == 3) {
           CG_trans = (model.distance[X3] / 2) - (((weightLoadCell[LC1] + weightLoadCell[LC2] / 2) * model.distance[X3]) / weightTotal);
         }
       }
-
     } else {
       CG_length = 0;
       CG_trans = 0;
     }
 
-    
+    printScaleOLED();
 
-    printScaleOLED();  
+#if defined(ESPNOW)
+    sendESPNow();
+#endif
 
     // serial connection
     if (Serial) {
       if (Serial.available() > 0) {
-
-        switch (menuPage)
-        {
+        switch (menuPage) {
           case MENU_HOME:
             menuPage = Serial.parseInt();
             updateMenu = true;
@@ -1789,8 +1843,8 @@ void loop() {
 #if defined(ESP8266)
               EEPROM.commit();
               // delete json model file
-              if (SPIFFS.exists(MODEL_FILE)) {
-                SPIFFS.remove(MODEL_FILE);
+              if (LittleFS.exists(MODEL_FILE)) {
+                LittleFS.remove(MODEL_FILE);
               }
 #endif
               resetCPU();
@@ -1805,96 +1859,96 @@ void loop() {
             break;
         }
         Serial.readString();
-
       }
 
-      if (!updateMenu)
-        return;
+      if (!updateMenu) return;
 
-      switch (menuPage)
-      {
+      switch (menuPage) {
         case MENU_HOME: {
-            Serial.print(F("\n\n********************************************\nCG scale by M.Lehmann - V"));
-            Serial.print(CGSCALE_VERSION);
-            Serial.print(F("\n\n"));
+          Serial.print(F(
+              "\n\n********************************************\nCG scale by "
+              "M.Lehmann - V"));
+          Serial.print(CGSCALE_VERSION);
+          Serial.print(F("\n\n"));
 
-            Serial.print(MENU_LOADCELLS);
-            Serial.print(F("  - Set number of load cells ("));
-            Serial.print(nLoadcells);
-            Serial.print(F(")\n"));
+          Serial.print(MENU_LOADCELLS);
+          Serial.print(F("  - Set number of load cells ("));
+          Serial.print(nLoadcells);
+          Serial.print(F(")\n"));
 
-            for (int i = X1; i <= X3; i++) {
-              Serial.print(MENU_DISTANCE_X1 + i);
-              Serial.print(F("  - Set distance X"));
-              Serial.print(i + 1);
-              Serial.print(F(" ("));
-              Serial.print(model.distance[i]);
-              Serial.print(F("mm)\n"));
-            }
-
-            Serial.print(MENU_REF_WEIGHT);
-            Serial.print(F("  - Set reference weight ("));
-            Serial.print(refWeight);
-            Serial.print(F("g)\n"));
-
-            Serial.print(MENU_REF_CG);
-            Serial.print(F("  - Set reference CG ("));
-            Serial.print(refCG);
+          for (int i = X1; i <= X3; i++) {
+            Serial.print(MENU_DISTANCE_X1 + i);
+            Serial.print(F("  - Set distance X"));
+            Serial.print(i + 1);
+            Serial.print(F(" ("));
+            Serial.print(model.distance[i]);
             Serial.print(F("mm)\n"));
+          }
 
-            Serial.print(MENU_AUTO_CALIBRATE);
-            Serial.print(F("  - Start autocalibration\n"));
+          Serial.print(MENU_REF_WEIGHT);
+          Serial.print(F("  - Set reference weight ("));
+          Serial.print(refWeight);
+          Serial.print(F("g)\n"));
 
-            for (int i = LC1; i <= LC3; i++) {
-              Serial.print(MENU_LOADCELL1_CALIBRATION_FACTOR + i);
-              if ((MENU_LOADCELL1_CALIBRATION_FACTOR + i) < 10) Serial.print(F(" "));
-              Serial.print(F(" - Set calibration factor of load cell "));
-              Serial.print(i + 1);
-              Serial.print(F(" ("));
-              Serial.print(calFactorLoadcell[i]);
-              Serial.print(F(")\n"));
-            }
+          Serial.print(MENU_REF_CG);
+          Serial.print(F("  - Set reference CG ("));
+          Serial.print(refCG);
+          Serial.print(F("mm)\n"));
 
-            for (int i = R1; i <= R2; i++) {
-              Serial.print(MENU_RESISTOR_R1 + i);
-              Serial.print(F(" - Set value of resistor R"));
-              Serial.print(i + 1);
-              Serial.print(F(" ("));
-              Serial.print(resistor[i]);
-              Serial.print(F("ohm)\n"));
-            }
+          Serial.print(MENU_AUTO_CALIBRATE);
+          Serial.print(F("  - Start autocalibration\n"));
 
-            Serial.print(MENU_BATTERY_MEASUREMENT);
-            Serial.print(F(" - Set battery type ("));
-            Serial.print(battTypName[batType]);
+          for (int i = LC1; i <= LC3; i++) {
+            Serial.print(MENU_LOADCELL1_CALIBRATION_FACTOR + i);
+            if ((MENU_LOADCELL1_CALIBRATION_FACTOR + i) < 10)
+              Serial.print(F(" "));
+            Serial.print(F(" - Set calibration factor of load cell "));
+            Serial.print(i + 1);
+            Serial.print(F(" ("));
+            Serial.print(calFactorLoadcell[i]);
             Serial.print(F(")\n"));
+          }
 
-            Serial.print(MENU_BATTERY_CELLS);
-            Serial.print(F(" - Set number of battery cells ("));
-            Serial.print(batCells);
-            Serial.print(F(")\n"));
+          for (int i = R1; i <= R2; i++) {
+            Serial.print(MENU_RESISTOR_R1 + i);
+            Serial.print(F(" - Set value of resistor R"));
+            Serial.print(i + 1);
+            Serial.print(F(" ("));
+            Serial.print(resistor[i]);
+            Serial.print(F("ohm)\n"));
+          }
 
-            Serial.print(MENU_SHOW_ACTUAL);
-            Serial.print(F(" - Show actual values\n"));
+          Serial.print(MENU_BATTERY_MEASUREMENT);
+          Serial.print(F(" - Set battery type ("));
+          Serial.print(battTypName[batType]);
+          Serial.print(F(")\n"));
+
+          Serial.print(MENU_BATTERY_CELLS);
+          Serial.print(F(" - Set number of battery cells ("));
+          Serial.print(batCells);
+          Serial.print(F(")\n"));
+
+          Serial.print(MENU_SHOW_ACTUAL);
+          Serial.print(F(" - Show actual values\n"));
 
 #if defined(ESP8266)
-            Serial.print(MENU_WIFI_INFO);
-            Serial.print(F(" - Show WiFi network info\n"));
+          Serial.print(MENU_WIFI_INFO);
+          Serial.print(F(" - Show WiFi network info\n"));
 #endif
 
-            Serial.print(MENU_RESET_DEFAULT);
-            Serial.print(F(" - Reset to factory defaults\n"));
+          Serial.print(MENU_RESET_DEFAULT);
+          Serial.print(F(" - Reset to factory defaults\n"));
 
-            Serial.print(F("\n"));
-            for (int i = 1; i <= errMsgCnt; i++) {
-              Serial.print(errMsg[i]);
-            }
-
-            Serial.print(F("\nPlease choose the menu number:"));
-
-            updateMenu = false;
-            break;
+          Serial.print(F("\n"));
+          for (int i = 1; i <= errMsgCnt; i++) {
+            Serial.print(errMsg[i]);
           }
+
+          Serial.print(F("\nPlease choose the menu number:"));
+
+          updateMenu = false;
+          break;
+        }
         case MENU_LOADCELLS:
           Serial.print(F("\n\nNumber of load cells: "));
           Serial.println(nLoadcells);
@@ -1925,14 +1979,17 @@ void loop() {
           updateMenu = false;
           break;
         case MENU_AUTO_CALIBRATE:
-          Serial.print(F("\n\nPlease put the reference weight on the scale.\nStart auto calibration (J/N)?\n"));
+          Serial.print(
+              F("\n\nPlease put the reference weight on the scale.\nStart auto "
+                "calibration (J/N)?\n"));
           updateMenu = false;
           break;
         case MENU_LOADCELL1_CALIBRATION_FACTOR ... MENU_LOADCELL3_CALIBRATION_FACTOR:
           Serial.print("\n\nCalibration factor of load cell ");
           Serial.print(menuPage - MENU_LOADCELL1_CALIBRATION_FACTOR + 1);
           Serial.print(F(": "));
-          Serial.println(calFactorLoadcell[menuPage - MENU_LOADCELL1_CALIBRATION_FACTOR]);
+          Serial.println(
+              calFactorLoadcell[menuPage - MENU_LOADCELL1_CALIBRATION_FACTOR]);
           printNewValueText();
           updateMenu = false;
           break;
@@ -1945,17 +2002,17 @@ void loop() {
           updateMenu = false;
           break;
         case MENU_BATTERY_MEASUREMENT: {
-            Serial.print(F("\n\nBattery type: "));
-            Serial.println(battTypName[batType]);
-            for (int i = 0; i < NUMBER_BAT_TYPES; i++) {
-              Serial.print(i);
-              Serial.print(" = ");
-              Serial.println(battTypName[i]);
-            }
-            printNewValueText();
-            updateMenu = false;
-            break;
+          Serial.print(F("\n\nBattery type: "));
+          Serial.println(battTypName[batType]);
+          for (int i = 0; i < NUMBER_BAT_TYPES; i++) {
+            Serial.print(i);
+            Serial.print(" = ");
+            Serial.println(battTypName[i]);
           }
+          printNewValueText();
+          updateMenu = false;
+          break;
+        }
         case MENU_BATTERY_CELLS:
           Serial.print(F("\n\nBattery cells: "));
           Serial.println(batCells);
@@ -1993,48 +2050,49 @@ void loop() {
           Serial.println();
           break;
 #if defined(ESP8266)
-        case MENU_WIFI_INFO:
-          {
-            Serial.println("\n\n********************************************\nWiFi network information\n");
+        case MENU_WIFI_INFO: {
+          Serial.println(
+              "\n\n********************************************\nWiFi network "
+              "information\n");
 
-            Serial.println("# Current WiFi status:");
-            WiFi.printDiag(Serial);
-            if (wifiSTAmode == false) {
-              Serial.print("Connected clients: ");
-              Serial.println(WiFi.softAPgetStationNum());
-            }
+          Serial.println("# Current WiFi status:");
+          WiFi.printDiag(Serial);
+          if (wifiSTAmode == false) {
+            Serial.print("Connected clients: ");
+            Serial.println(WiFi.softAPgetStationNum());
+          }
 
-            Serial.println("\n# Available WiFi networks:");
-            int wifiCnt = WiFi.scanNetworks();
-            if (wifiCnt == 0) {
-              Serial.println("no networks found");
-            } else {
-              for (int i = 0; i < wifiCnt; ++i) {
-                // Print SSID and RSSI for each network found
-                Serial.print(i + 1);
-                Serial.print(": ");
-                Serial.print(WiFi.SSID(i));
-                Serial.print(" (");
-                Serial.print(WiFi.RSSI(i));
-                Serial.print("dBm) ");
-                switch (WiFi.encryptionType(i)) {
-                  case ENC_TYPE_WEP:
-                    Serial.print("WEP");
-                    break;
-                  case ENC_TYPE_TKIP:
-                    Serial.print("WPA");
-                    break;
-                  case ENC_TYPE_CCMP:
-                    Serial.print("WPA2");
-                    break;
-                  case ENC_TYPE_AUTO:
-                    Serial.print("Auto");
-                    break;
-                }
-                Serial.println("");
+          Serial.println("\n# Available WiFi networks:");
+          int wifiCnt = WiFi.scanNetworks();
+          if (wifiCnt == 0) {
+            Serial.println("no networks found");
+          } else {
+            for (int i = 0; i < wifiCnt; ++i) {
+              // Print SSID and RSSI for each network found
+              Serial.print(i + 1);
+              Serial.print(": ");
+              Serial.print(WiFi.SSID(i));
+              Serial.print(" (");
+              Serial.print(WiFi.RSSI(i));
+              Serial.print("dBm) ");
+              switch (WiFi.encryptionType(i)) {
+                case ENC_TYPE_WEP:
+                  Serial.print("WEP");
+                  break;
+                case ENC_TYPE_TKIP:
+                  Serial.print("WPA");
+                  break;
+                case ENC_TYPE_CCMP:
+                  Serial.print("WPA2");
+                  break;
+                case ENC_TYPE_AUTO:
+                  Serial.print("Auto");
+                  break;
               }
+              Serial.println("");
             }
           }
+        }
           updateMenu = false;
           break;
 #endif
@@ -2043,7 +2101,6 @@ void loop() {
           updateMenu = false;
           break;
       }
-
     } else {
       updateMenu = true;
     }
