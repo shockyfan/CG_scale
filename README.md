@@ -1,28 +1,19 @@
-# CG scale
+#CG scale (modified)
 
-Die CG Scale-Firmware ist Quelloffen und kostenlos erhältlich. Wenn es Ihnen gefällt, unterstützen Sie das Projekt mit einer Spende und helfen Sie mit, dass es kontinuierlich weiterentwickelt wird.
+Der Originale Code stammt von Nightflyer88 und ist hier zu finden:
+https://github.com/nightflyer88/CG_scale
 
-[![Donate](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/Paypal.png)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=R69PMKTCXQBUU&source=url)
+Da in letzter Zeit keine Entwicklung mehr stattgefunden hat und ich ein paar Ideen eingbringen möchte, habe ich mich für diesen Fork entschlossen.
 
-Schwerpunktwaage auf Arduinobasis zum auswiegen von Flugmodellen. Es werden relativ wenige Bauteile benötigt, und sollte auch von Elektronikanfänger problemlos nachgebaut werden können.
-Die wichtigsten Funktionen:
+Bisher umgesetzt:
+- Restrukturierung für PlatformIO, was ein einfacheres Builden und Dependencies Management ermöglicht
+- Update einiger Dependencies
+- Fixes von Compilerwarnungen
+- Implementierung von ESP Now zur Kommunikation mit dem Servotester Deluxe, dieser ist nun in der Lage als Kabelloses Display zu fungieren. (Mein Fork mit entsprechender Funktionalität und anderen Erweiterungen: https://github.com/shockyfan/Servotester_Deluxe)
 
-- unterstützt Waagen mit 2 oder 3 Wiegezellen
-- unterstützt ESP8266 (auch Wifi Kit 8) und Arduino mit ATmega328, ATmega32u4
-- automatische Kalibrierung anhand eines Referenzobjekts, dadurch kein mühsames eruieren der Kalibrierwerte
-- Anzeige durch OLED Display
-- Batteriespannnung kann gemessen werden
-- Einstellungen werden durch ein Menü per serieller Schnittstelle vorgenommen 
-- Beim ESP8266 können die Einstellungen auch bequem per Webpage vorgenommen werden
-- Parameter werden dauerhaft im EEprom gespeichert, und müssen nach einem Softwareupdate nicht neu parametriert werden
-- nur wenige Bauteile erforderlich, dadurch schnell und einfach aufgebaut
-
-Weiter infos zum Aufbau findet man im [Wiki](https://github.com/nightflyer88/CG_scale/wiki)
-
-![init](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/cgScale_init.jpeg)
-![run](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/cgScale.jpeg)
-![cgscale_home](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/cgscale_home.png)
-![cgscale_models](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/cgscale_models.png)
-![cgscale_settings](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/cgscale_settings.png)
-![cgscale_models](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/CG_Scale_wood.jpeg)
-![cgscale_models](https://github.com/nightflyer88/CG_scale/blob/master/Doc/img/CG_Scale_ASW20.jpeg)
+Worauf beim Flashen zu Achten ist:
+- Spiffs wurde durch LittleFS ersetzt, dadruch muss die UI neu aufgespielt werden
+- Bitte vorher Kalibrierdaten übers WebInterface oder die Konsole notieren damit anschließend nichts neu kalibriert werden muss
+- Aktuell nur mit dem ESP8266 getestet
+- Zum Verwenden der kabellosen Display Funktion muss zuerst das ensprechende Menü im Servotester ausgewählt und dann die Waage eingeschaltet werden. Diese bootet dann im ESP Not Modus, das WebInterface ist währendessen nicht verfügbar
+- Der Modus mit getrennten Waagen für 2 oder 3 Beinfahrwerke ist nicht getestet und wird aktuell nicht funktionieren, steht auf der ToDo.
